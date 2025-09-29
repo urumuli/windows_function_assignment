@@ -1,0 +1,195 @@
+
+CREATE DATABASE  AgriMarket;
+USE AgriMarket;
+
+CREATE TABLE farmers (
+  farmer_id INT PRIMARY KEY,
+  name VARCHAR(100),
+  district VARCHAR(50)
+);
+
+CREATE TABLE buyers (
+  buyer_id INT PRIMARY KEY,
+  name VARCHAR(100),
+  buyer_type VARCHAR(30),
+  district VARCHAR(50)
+);
+
+CREATE TABLE products (
+  product_id INT PRIMARY KEY,
+  name VARCHAR(100),
+  category VARCHAR(50)
+);
+CREATE TABLE transactions (
+  transaction_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  buyer_id INT,
+  product_id INT,
+  farmer_id INT,
+  market VARCHAR(50),
+  transaction_date DATE,
+  amount DECIMAL(12,2),
+  FOREIGN KEY (buyer_id) REFERENCES buyers(buyer_id),
+  FOREIGN KEY (product_id) REFERENCES products(product_id),
+  FOREIGN KEY (farmer_id) REFERENCES farmers(farmer_id)
+);
+
+INSERT INTO farmers VALUES (5001, 'Jean Musabyimana', 'Kigali');
+INSERT INTO farmers VALUES (5002, 'Alice Mukamana', 'Southern');
+INSERT INTO farmers VALUES (5003, 'Emmanuel Nkurunziza', 'Northern');
+INSERT INTO farmers VALUES (5004, 'Beatrice Uwizeyimana', 'Western');
+INSERT INTO farmers VALUES (5005, 'Oscar Habimana', 'Eastern');
+
+
+INSERT INTO buyers VALUES (6001, 'CBN Ltd', 'Wholesale', 'Kigali');
+INSERT INTO buyers VALUES (6002, 'Local Market LLC', 'Retail', 'Southern');
+INSERT INTO buyers VALUES (6003, 'Exporter Co', 'Exporter', 'Kigali');
+INSERT INTO buyers VALUES (6004, 'Mama Farmer Coop', 'Cooperative', 'Western');
+
+
+INSERT INTO products VALUES (7001, 'Coffee (kg)', 'Cashcrop');
+INSERT INTO products VALUES (7002, 'Maize (kg)', 'Staple');
+INSERT INTO products VALUES (7003, 'Tomato (kg)', 'Vegetable');
+
+COMMIT;
+DELIMITER $$
+CREATE PROCEDURE gen_agri_transactions(IN num INT)
+BEGIN
+  DECLARE i INT DEFAULT 1;
+  DECLARE bid INT;
+  DECLARE pid INT;
+  DECLARE fid INT;
+  DECLARE amt DECIMAL(12,2);
+  DECLARE sdate DATE;
+  WHILE i <= num DO
+    SET bid = 6000 + FLOOR(1 + RAND()*4);   
+    SET pid = 7000 + FLOOR(1 + RAND()*3);   
+    SET fid = 5000 + FLOOR(1 + RAND()*5);   
+    SET amt = ROUND(100 + RAND() * 5000, 2); 
+    SET sdate = DATE_SUB(CURDATE(), INTERVAL FLOOR(RAND()*700) DAY);
+    INSERT INTO transactions (buyer_id, product_id, farmer_id, market, transaction_date, amount)
+    VALUES (bid, pid, fid, CONCAT('Market-', 1 + FLOOR(RAND()*6)), sdate, amt);
+    SET i = i + 1;
+  END WHILE;
+END$$
+DELIMITER ;
+
+CALL gen_agri_transactions(600);
+DROP PROCEDURE IF EXISTS gen_agri_transactions;
+SELECT COUNT(*) AS total_transactions FROM transactions;
+SHOW TABLES;
+
+
+WITH farmer_rev AS (
+  SELECT
+    f.farmer_id,
+    f.name AS farmer_name,
+    f.district,
+    DATE_FORMAT(t.transaction_date, '%Y-%m') AS month_label,
+    SUM(t.amount) AS total_revenue
+  FROM transactions t
+  JOIN farmers f ON t.farmer_id = f.farmer_id
+  GROUP BY f.farmer_id, f.name, f.district, DATE_FORMAT(t.transaction_date, '%Y-%m')
+)
+
+
+SELECT *
+FROM (
+  SELECT
+    district,
+    month_label,
+    farmer_id,
+    farmer_name,
+    total_revenue,
+    RANK() OVER (PARTITION BY district, month_label ORDER BY total_revenue DESC)       AS rnk,
+    ROW_NUMBER() OVER (PARTITION BY district, month_label ORDER BY total_revenue DESC) AS rn,
+    DENSE_RANK() OVER (PARTITION BY district, month_label ORDER BY total_revenue DESC) AS dense_rnk,
+    PERCENT_RANK() OVER (PARTITION BY district, month_label ORDER BY total_revenue DESC) AS pct_rank
+  FROM farmer_rev
+) x
+WHERE rnk <= 5
+ORDER BY district, month_label, rnk;
+
+
+WITH monthly AS (
+  SELECT
+    f.district,
+    DATE_FORMAT(t.transaction_date, '%Y-%m-01') AS month_start,
+    SUM(t.amount) AS monthly_revenue
+  FROM transactions t
+  JOIN farmers f ON t.farmer_id = f.farmer_id
+  GROUP BY f.district, DATE_FORMAT(t.transaction_date, '%Y-%m-01')
+)
+SELECT
+  district,
+  month_start,
+  monthly_revenue,
+  SUM(monthly_revenue) OVER (
+    PARTITION BY district ORDER BY month_start
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS running_total,
+  AVG(monthly_revenue) OVER (
+    PARTITION BY district ORDER BY month_start
+    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+  ) AS moving_avg_3m
+FROM monthly
+ORDER BY district, month_start;
+
+SELECT
+  transaction_id,
+  transaction_date,
+  amount,
+  AVG(amount) OVER (ORDER BY transaction_date
+                    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS avg_rows_3,
+  AVG(amount) OVER (ORDER BY transaction_date
+                    RANGE BETWEEN INTERVAL 60 DAY PRECEDING AND CURRENT ROW) AS avg_range_60d
+FROM transactions
+ORDER BY transaction_date
+LIMIT 50;
+
+WITH monthly AS (
+  SELECT
+    f.district,
+    DATE_FORMAT(t.transaction_date, '%Y-%m-01') AS month_start,
+    SUM(t.amount) AS monthly_revenue
+  FROM transactions t
+  JOIN farmers f ON t.farmer_id = f.farmer_id
+  GROUP BY f.district, DATE_FORMAT(t.transaction_date, '%Y-%m-01')
+)
+SELECT
+  district,
+  month_start,
+  monthly_revenue,
+  LAG(monthly_revenue) OVER (PARTITION BY district ORDER BY month_start) AS prev_month_revenue,
+  ROUND(
+    (monthly_revenue
+     - LAG(monthly_revenue) OVER (PARTITION BY district ORDER BY month_start))
+    / NULLIF(LAG(monthly_revenue) OVER (PARTITION BY district ORDER BY month_start), 0) * 100
+  , 2) AS pct_change
+FROM monthly
+ORDER BY district, month_start;
+
+WITH buyer_rev AS (
+  SELECT b.buyer_id, b.name,
+         COALESCE(SUM(t.amount),0) AS total_spend
+  FROM buyers b
+  LEFT JOIN transactions t ON b.buyer_id = t.buyer_id
+  GROUP BY b.buyer_id, b.name
+)
+SELECT
+  buyer_id,
+  name,
+  total_spend,
+  NTILE(4) OVER (ORDER BY total_spend DESC) AS spend_quartile,
+  CUME_DIST() OVER (ORDER BY total_spend DESC) AS cum_dist
+FROM buyer_rev
+ORDER BY total_spend DESC;
+
+SHOW TABLES;
+DESCRIBE farmers;
+DESCRIBE buyers;
+DESCRIBE products;
+
+show databases ;
+select * from buyers;
+select * from products ;
+select * from farmers ;

@@ -1,4 +1,3 @@
-# windows_function_assignment
 Assignment I – Windows Functions
 
 MY NAME IS URUMURI GASANA M NOELLA am AUCA student in IT(software engineering)
@@ -59,9 +58,8 @@ TRANSACTIONS: transaction_id, buyer_id, product_id, farmer_id, market, transacti
 
 This structure lets us link each sale to a farmer, buyer, product and place.
 
-FARMERS  1 ---< TRANSACTIONS >--- 1  PRODUCTS
-           \
-            >--- 1  BUYERS
+FARMERS 1 ---< TRANSACTIONS >--- 1 PRODUCTS
+>--- 1 BUYERS
 
 How this helps people
 
@@ -74,5 +72,3 @@ Buyers/exporters: they find reliable farmers and plan purchases.
 Local markets: they can plan stock and staff for busy months.
 
 Small cooperatives: they get evidence to ask for loans or help from NAEB.
-
-
